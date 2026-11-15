@@ -1,0 +1,247 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseProperty, addProperty, addEnumValue, isEnum, entityRows, renameEntity, removeEntity, toJSON, fromJSON, toPlantUML, autoLayout, cardHeight, sampleDocument, neighbourEntity } from '../src/model.js';
+
+const blank = () => ({ name: 'Test', entities: [{ id: 'army', name: 'Army', x: 10, y: 20, properties: [] }] });
+
+test('property lines default to str and support primitive and class collections', () => {
+  assert.deepEqual(parseProperty('name'), { name: 'name', type: 'str', many: false });
+  assert.deepEqual(parseProperty('strength int'), { name: 'strength', type: 'int', many: false });
+  assert.deepEqual(parseProperty('scores int *'), { name: 'scores', type: 'int', many: true });
+  assert.deepEqual(parseProperty('  units   Unit  *  '), { name: 'units', type: 'Unit', many: true });
+  assert.deepEqual(parseProperty('names *'), { name: 'names', type: 'str', many: true });
+  assert.equal(parseProperty('ready boolean').type, 'bool');
+  assert.throws(() => parseProperty('bad-name int'));
+  assert.throws(() => parseProperty('name int * extra'));
+  assert.throws(() => parseProperty('name * int'));
+});
+
+test('new class properties create exactly one linked entity; updates preserve IDs', () => {
+  const original = blank();
+  const first = addProperty(original, 'army', 'commander Person');
+  assert.equal(original.entities.length, 1);
+  assert.equal(first.document.entities.length, 2);
+  assert.equal(first.created.name, 'Person');
+  const second = addProperty(first.document, 'army', 'officers person *');
+  assert.equal(second.document.entities.length, 2);
+  assert.equal(second.property.type, 'Person');
+  assert.equal(second.property.many, true);
+  const updated = addProperty(second.document, 'army', 'commander str');
+  assert.equal(updated.document.entities[0].properties.length, 2);
+  assert.equal(updated.property.id, first.property.id);
+  assert.equal(updated.property.type, 'str');
+  assert.throws(() => addProperty(second.document, 'army', 'officers str', first.property.id));
+});
+
+test('self references do not create duplicate entities', () => {
+  const result = addProperty(blank(), 'army', 'reinforcements Army *');
+  assert.equal(result.document.entities.length, 1);
+});
+
+test('renaming updates links; deleting removes incoming properties', () => {
+  const next = addProperty(blank(), 'army', 'commander Person').document;
+  const personId = next.entities[1].id;
+  const renamed = renameEntity(next, personId, 'Commander');
+  assert.equal(renamed.entities[0].properties[0].type, 'Commander');
+  assert.throws(() => renameEntity(renamed, personId, 'army'));
+  assert.throws(() => renameEntity(renamed, personId, 'int'));
+  const deleted = removeEntity(renamed, personId);
+  assert.equal(deleted.entities.length, 1);
+  assert.equal(deleted.entities[0].properties.length, 0);
+});
+
+test('JSON round trip preserves identities, positions, types and cardinalities', () => {
+  const doc = sampleDocument();
+  assert.deepEqual(fromJSON(toJSON(doc)), doc);
+  const json = JSON.parse(toJSON(doc));
+  assert.equal(json.entities[0].properties[2].cardinality, 'many');
+  assert.equal(json.entities[0].properties[0].cardinality, 'one');
+});
+
+test('malformed imports reject duplicate names, bad cardinalities and dangling links', () => {
+  assert.throws(() => fromJSON('{'));
+  assert.throws(() => fromJSON('{}'));
+  assert.throws(() => fromJSON(JSON.stringify({ entities: [{ name: 'A' }, { name: 'a' }] })));
+  assert.throws(() => fromJSON(JSON.stringify({ entities: [{ name: 'A', properties: [{ name: 'a', type: 'Missing' }] }] })));
+  assert.throws(() => fromJSON(JSON.stringify({ entities: [{ name: 'A', properties: [{ name: 'a', type: 'str', cardinality: 'bogus' }] }] })));
+  assert.throws(() => fromJSON(JSON.stringify({ entities: [{ name: 'A', properties: [{ name: 'a' }, { name: 'A' }] }] })));
+  assert.throws(() => fromJSON(JSON.stringify({ entities: [{ id: 'same', name: 'A' }, { id: 'same', name: 'B' }] })));
+});
+
+test('PlantUML exports primitive arrays and labelled 1:1 and 1:N associations', () => {
+  let doc = addProperty(blank(), 'army', 'commanders Person *').document;
+  doc = addProperty(doc, 'army', 'province Province').document;
+  doc = addProperty(doc, 'army', 'scores int *').document;
+  const uml = toPlantUML(doc);
+  assert.match(uml, /^@startuml/);
+  assert.match(uml, /commanders: Person\[\]/);
+  assert.match(uml, /scores: int\[\]/);
+  assert.match(uml, /Army "1" --> "\*" Person : commanders/);
+  assert.match(uml, /Army "1" --> "1" Province : province/);
+  assert.match(uml, /@enduml$/);
+});
+
+test('arranging handles cycles and gives tall cards enough vertical space', () => {
+  let doc = addProperty(blank(), 'army', 'others Army *').document;
+  for (let i = 0; i < 30; i++) doc = addProperty(doc, 'army', `p${i} int`).document;
+  doc.entities.push(...['A', 'B', 'C'].map(name => ({ id: name, name, x: 0, y: 0, properties: [] })));
+  const arranged = autoLayout(doc);
+  assert.equal(arranged.entities.length, 4);
+  assert.ok(arranged.entities[3].y > arranged.entities[0].y + cardHeight(arranged.entities[0]));
+});
+
+test('overwriting a selected property renames it in place rather than adding another', () => {
+  const original = addProperty(blank(), 'army', 'PropName');
+  const updated = addProperty(original.document, 'army', 'NewProp', original.property.id);
+  assert.equal(updated.document.entities[0].properties.length, 1);
+  assert.equal(updated.property.name, 'NewProp');
+  assert.equal(updated.property.id, original.property.id);
+});
+
+test('right follows the active class property and left retraces its parent', () => {
+  const doc = sampleDocument();
+  const [state, army, commander, province] = doc.entities;
+  const armies = state.properties.find(p => p.type === 'Army');
+  assert.equal(neighbourEntity(doc, state.id, 'right', armies.id).id, army.id);
+  const leader = army.properties.find(p => p.type === 'Commander');
+  assert.equal(neighbourEntity(doc, army.id, 'right', leader.id).id, commander.id);
+  assert.equal(neighbourEntity(doc, commander.id, 'left', null, army.id).id, army.id);
+  assert.equal(neighbourEntity(doc, province.id, 'left', null, state.id).id, state.id);
+});
+
+test('entity navigation prefers links, then the nearest entity in that direction', () => {
+  const doc = { name: 'Test', entities: [
+    { id: 'centre', name: 'Centre', x: 400, y: 200, properties: [] },
+    { id: 'near', name: 'Near', x: 700, y: 200, properties: [] },
+    { id: 'far', name: 'Far', x: 1200, y: 200, properties: [] },
+  ] };
+  assert.equal(neighbourEntity(doc, 'centre', 'right').id, 'near');
+  assert.equal(neighbourEntity(doc, 'centre', 'left'), null);
+  doc.entities[0].properties.push({ id: 'link', name: 'remote', type: 'Far', many: false });
+  assert.equal(neighbourEntity(doc, 'centre', 'right').id, 'far');
+  assert.equal(neighbourEntity(doc, 'far', 'left').id, 'centre');
+  assert.equal(neighbourEntity(doc, 'missing', 'right'), null);
+});
+
+test('enum syntax creates a named enum linked to the property, with values instead of properties', () => {
+  assert.deepEqual(parseProperty('organisation enum'), { name: 'organisation', type: 'enum', many: false });
+  const result = addProperty(blank(), 'army', 'organisation enum');
+  assert.equal(result.property.type, 'Organisation');
+  assert.equal(result.created.name, 'Organisation');
+  assert.equal(isEnum(result.created), true);
+  assert.deepEqual(result.created.values, []);
+  assert.deepEqual(result.created.properties, []);
+  assert.equal(result.document.entities.some(e => e.name === 'enum'), false);
+  let document = result.document;
+  for (const value of ['ready', 'disorganised', 'routed']) document = addEnumValue(document, result.created.id, value).document;
+  assert.deepEqual(entityRows(document.entities[1]).map(v => v.name), ['ready', 'disorganised', 'routed']);
+  assert.deepEqual(document.entities[1].properties, []);
+  assert.deepEqual(result.document.entities[1].values, []);
+});
+
+test('enum properties have separate definitions, while explicit named references can share one', () => {
+  let result = addProperty(blank(), 'army', 'organisation enum');
+  const firstEnum = result.created;
+  let document = result.document;
+  document.entities.push({ id: 'unit', name: 'Unit', x: 0, y: 0, properties: [] });
+  result = addProperty(document, 'unit', 'organisation enum');
+  assert.equal(result.created.name, 'UnitOrganisation');
+  assert.notEqual(result.created.id, firstEnum.id);
+  result = addProperty(result.document, 'unit', 'fallback Organisation');
+  assert.equal(result.created, null);
+  assert.equal(result.property.type, firstEnum.name);
+  assert.equal(result.document.entities.filter(isEnum).length, 2);
+  result = addProperty(result.document, 'unit', 'states enum *');
+  assert.equal(result.property.many, true);
+  assert.equal(isEnum(result.created), true);
+});
+
+test('updating or renaming an enum property retains its enum and values', () => {
+  const original = addProperty(blank(), 'army', 'organisation enum');
+  const document = addEnumValue(original.document, original.created.id, 'ready').document;
+  const updated = addProperty(document, 'army', 'organisation enum');
+  assert.equal(updated.created, null);
+  assert.equal(updated.property.id, original.property.id);
+  assert.equal(updated.property.type, original.created.name);
+  const renamed = addProperty(updated.document, 'army', 'status enum', original.property.id);
+  assert.equal(renamed.created, null);
+  assert.equal(renamed.document.entities.length, 2);
+  assert.deepEqual(renamed.document.entities[1].values.map(v => v.name), ['ready']);
+});
+
+test('enum generation avoids existing class names', () => {
+  const document = blank();
+  document.entities.push({ id: 'existing', name: 'Organisation', x: 0, y: 0, properties: [] });
+  document.entities.push({ id: 'existing2', name: 'ArmyOrganisation', x: 0, y: 0, properties: [] });
+  const result = addProperty(document, 'army', 'organisation enum');
+  assert.equal(result.created.name, 'ArmyOrganisation2');
+  assert.equal(result.property.type, result.created.name);
+  assert.equal(result.document.entities[1].kind, undefined);
+});
+
+test('enum values are untyped, editable in place and validated independently of property syntax', () => {
+  const original = addProperty(blank(), 'army', 'organisation enum');
+  const first = addEnumValue(original.document, original.created.id, 'ready');
+  const updated = addEnumValue(first.document, original.created.id, 'disorganised', first.property.id);
+  assert.equal(updated.property.id, first.property.id);
+  assert.equal(updated.document.entities[1].values.length, 1);
+  const text = addEnumValue(updated.document, original.created.id, 'not ready');
+  assert.equal(text.property.name, 'not ready');
+  assert.equal(text.property.type, undefined);
+  assert.throws(() => addEnumValue(text.document, original.created.id, 'not ready', first.property.id));
+  assert.throws(() => addEnumValue(text.document, original.created.id, ''));
+  assert.throws(() => addEnumValue(text.document, original.created.id, 'ready\nrouted'));
+  assert.throws(() => addProperty(text.document, original.created.id, 'strength int'));
+  assert.throws(() => addEnumValue(text.document, 'army', 'ready'));
+});
+
+test('JSON round trips enums, IDs, values and collections while still importing old sketches', () => {
+  const result = addProperty(blank(), 'army', 'organisation enum *');
+  const document = addEnumValue(result.document, result.created.id, 'ready').document;
+  assert.deepEqual(fromJSON(toJSON(document)), document);
+  const exported = JSON.parse(toJSON(document));
+  assert.equal(exported.entities[1].kind, 'enum');
+  assert.equal(exported.entities[1].properties, undefined);
+  assert.equal(exported.entities[1].values[0].value, 'ready');
+  assert.equal(exported.entities[0].properties[0].cardinality, 'many');
+  assert.deepEqual(fromJSON(toJSON(sampleDocument())).entities.map(e => e.name), ['GameState', 'Army', 'Commander', 'Province']);
+  const imported = fromJSON(JSON.stringify({ entities: [{ name: 'Organisation', kind: 'enum', values: ['ready', 'routed'] }] }));
+  assert.deepEqual(imported.entities[0].values.map(v => v.name), ['ready', 'routed']);
+});
+
+test('enum imports reject mixed properties, duplicate values, bad kinds and invalid values', () => {
+  const parse = entity => fromJSON(JSON.stringify({ entities: [entity] }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', properties: [{ name: 'name' }] }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', values: ['ready', 'READY'] }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', values: [null] }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', values: [42] }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', values: 'ready' }));
+  assert.throws(() => parse({ name: 'State', kind: 'enum', values: ['a\nb'] }));
+  assert.throws(() => parse({ name: 'State', kind: 'bogus', values: [] }));
+  assert.throws(() => parse({ name: 'State', values: ['ready'] }));
+});
+
+test('enum renaming updates links and deletion removes the referring property', () => {
+  const result = addProperty(blank(), 'army', 'organisation enum');
+  let document = addEnumValue(result.document, result.created.id, 'ready').document;
+  document = renameEntity(document, result.created.id, 'Readiness');
+  assert.equal(document.entities[0].properties[0].type, 'Readiness');
+  assert.deepEqual(document.entities[1].values.map(v => v.name), ['ready']);
+  assert.equal(neighbourEntity(document, 'army', 'right', result.property.id).id, result.created.id);
+  assert.equal(neighbourEntity(document, result.created.id, 'left').id, 'army');
+  document = removeEntity(document, result.created.id);
+  assert.equal(document.entities.length, 1);
+  assert.deepEqual(document.entities[0].properties, []);
+});
+
+test('PlantUML exports enum declarations, values and dashed references', () => {
+  const result = addProperty(blank(), 'army', 'organisation enum');
+  let document = result.document;
+  for (const value of ['ready', 'disorganised', 'routed', 'not ready']) document = addEnumValue(document, result.created.id, value).document;
+  const uml = toPlantUML(document);
+  assert.match(uml, /enum Organisation \{\n  ready\n  disorganised\n  routed\n  \{field\} "not ready"\n\}/);
+  assert.match(uml, /organisation: Organisation/);
+  assert.match(uml, /Army \.\.> Organisation : organisation/);
+  assert.doesNotMatch(uml, /class Organisation|ready: str|class enum/);
+  assert.equal(cardHeight(document.entities[1]), 52 + 4 * 30 + 32);
+});

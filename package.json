@@ -1,0 +1,26 @@
+{
+  "name": "chamdo-entity-sketch",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --strictPort",
+    "test": "node --test test/model.test.js",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "lucide-react": "0.468.0"
+  },
+  "devDependencies": {
+    "vite": "7.3.6",
+    "@playwright/test": "1.63.0"
+  },
+  "overrides": {
+    "rollup": "4.62.2",
+    "postcss": "8.5.28"
+  }
+}
