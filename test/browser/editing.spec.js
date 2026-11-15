@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.beforeEach(async ({ page }) => { await page.goto('/'); });
+test.beforeEach(async ({ page, baseURL }) => { await page.goto(baseURL); });
 
 async function newEntity(page, name = 'TestState') {
   await page.getByRole('button', { name: 'New sketch', exact: true }).click();
