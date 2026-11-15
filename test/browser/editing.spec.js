@@ -1,42 +1,6 @@
-import { test as base, expect } from '@playwright/test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { test, expect } from '@playwright/test';
 
-// Use Shuttle's leased session endpoint so these checks never touch personal tabs.
-const test = base.extend({
-  context: async ({ playwright, launchOptions, headless, baseURL, viewport }, use) => {
-    const profile = await mkdtemp(join(tmpdir(), 'entity-shuttle-test-'));
-    const host = spawn(launchOptions.executablePath, [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--disable-crashpad-for-testing', ...(headless ? ['--headless'] : [])], { stdio: 'ignore' });
-    try {
-      await expect.poll(async () => readFile(join(profile, 'DevToolsActivePort'), 'utf8').catch(() => ''), { timeout: 10000 }).not.toBe('');
-      const { stdout } = await promisify(execFile)('shuttle-ctl', ['open', 'entity-test', baseURL, '--udd', profile]).catch(error => {
-        if (error.stdout?.includes('"sessionId"')) return { stdout: error.stdout };
-        throw new Error(`Shuttle session failed: ${error.stdout || error.stderr || error.message}`);
-      });
-      const session = JSON.parse(stdout);
-      if (!session.loaded) {
-        await promisify(execFile)('shuttle-ctl', ['call', 'open', `targetId=${session.targetId}`, `url=${baseURL}`, '--udd', profile]);
-      }
-      const browser = await playwright.chromium.connectOverCDP(session.cdpEndpoint);
-      const context = browser.contexts()[0];
-      await context.pages()[0].setViewportSize(viewport);
-      await use(context);
-    } finally {
-      if (host.exitCode === null && host.signalCode === null) {
-        const stopped = new Promise(resolve => host.once('exit', resolve));
-        host.kill('SIGTERM');
-        const timeout = setTimeout(() => host.kill('SIGKILL'), 5000);
-        await stopped;
-        clearTimeout(timeout);
-      }
-      await rm(profile, { recursive: true, force: true });
-    }
-  },
-  page: async ({ context }, use) => { await use(context.pages()[0]); },
-});
+test.beforeEach(async ({ page }) => { await page.goto('/'); });
 
 async function newEntity(page, name = 'TestState') {
   await page.getByRole('button', { name: 'New sketch', exact: true }).click();
@@ -56,6 +20,32 @@ async function add(input, text) {
   await expect(input).toHaveValue('');
   await expect(input).toBeFocused();
 }
+
+test('a fresh sketch shows the generic project example and enum', async ({ page }) => {
+  await expect(page).toHaveTitle('Entity — Object relationship sketcher');
+  await expect(page.getByRole('textbox', { name: 'Sketch name', exact: true })).toHaveValue('Project model');
+  await expect(page.locator('.project-name .eyebrow')).toHaveText('OBJECT RELATIONSHIPS');
+  await expect(page.getByRole('article', { name: 'Project entity', exact: true })).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Status enum', exact: true })).toContainText('in_progress');
+});
+
+test('saved sketches from the original release migrate without losing their data', async ({ page }) => {
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('entity-sketch-v1'))).not.toBeNull();
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('chamdo-entity-sketch-v1', JSON.stringify({
+      format: 'chamdo-entity-sketch', version: 1, name: 'Saved model',
+      entities: [{ id: 'saved-person', name: 'Person', position: { x: 90, y: 90 }, properties: [{ id: 'saved-name', name: 'name', type: 'str', cardinality: 'one' }] }],
+    }));
+  });
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Sketch name', exact: true })).toHaveValue('Saved model');
+  await expect(page.getByRole('article', { name: 'Person entity', exact: true })).toContainText('name');
+  await expect.poll(() => page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('entity-sketch-v1') || 'null');
+    return saved && { format: saved.format, name: saved.name, entityId: saved.entities[0].id, propertyId: saved.entities[0].properties[0].id };
+  })).toEqual({ format: 'entity-sketch', name: 'Saved model', entityId: 'saved-person', propertyId: 'saved-name' });
+});
 
 test('Enter adds a row; Up selects it for overwriting in the graph', async ({ page }) => {
   const input = await newEntity(page);
@@ -106,28 +96,28 @@ test('Up and Down traverse rows, Enter always returns to a new row', async ({ pa
 
 test('Left and Right follow entity links and work with the inspector hidden', async ({ page }) => {
   let input = await newEntity(page);
-  await add(input, 'units Unit *');
+  await add(input, 'items Item *');
   await page.getByRole('button', { name: 'Hide inspector', exact: true }).click();
   await page.keyboard.press('Enter');
   input = page.getByRole('textbox', { name: 'TestState property editor', exact: true });
   await expect(input).toBeFocused();
   await expect(page.locator('.inspector')).toHaveCount(0);
   await input.press('ArrowUp');
-  await expect(input).toHaveValue('units Unit *');
+  await expect(input).toHaveValue('items Item *');
   await input.press('ArrowRight');
-  const unitInput = page.getByRole('textbox', { name: 'Unit property editor', exact: true });
-  await expect(unitInput).toBeFocused();
-  await add(unitInput, 'name');
-  await unitInput.press('ArrowLeft');
+  const itemInput = page.getByRole('textbox', { name: 'Item property editor', exact: true });
+  await expect(itemInput).toBeFocused();
+  await add(itemInput, 'name');
+  await itemInput.press('ArrowLeft');
   await expect(input).toBeFocused();
-  await expect(input).toHaveValue('units Unit *');
+  await expect(input).toHaveValue('items Item *');
   await expect(page.locator('.inspector')).toHaveCount(0);
   await page.screenshot({ path: '/tmp/entity-inline-editing.png' });
 });
 
 test('inspector edits are mirrored in the active graph row', async ({ page }) => {
   const input = await newEntity(page);
-  await add(input, 'strength int');
+  await add(input, 'count int');
   await page.locator('.inspector-property-name').click();
   const sidebar = page.locator('#property-input');
   await expect(sidebar).toBeFocused();
@@ -157,18 +147,18 @@ test('invalid edits block arrow navigation and remain visible on the graph', asy
 
 test('enums have value-only editors, distinct links and structured exports', async ({ page }) => {
   const input = await newEntity(page);
-  await add(input, 'organisation enum');
+  await add(input, 'status enum');
   await input.press('ArrowRight');
-  const values = page.getByRole('textbox', { name: 'Organisation value editor', exact: true });
+  const values = page.getByRole('textbox', { name: 'Status value editor', exact: true });
   await expect(values).toBeFocused();
-  for (const value of ['ready', 'disorganised', 'routed']) await add(values, value);
-  const card = page.getByRole('article', { name: 'Organisation enum', exact: true });
+  for (const value of ['draft', 'active', 'archived']) await add(values, value);
+  const card = page.getByRole('article', { name: 'Status enum', exact: true });
   await expect(card.locator('.card-property')).toHaveCount(3);
   await expect(card.locator('.property-type')).toHaveCount(0);
   await expect(page.locator('.enum-edge')).toHaveCount(1);
   await values.press('ArrowUp');
-  await expect(values).toHaveValue('routed');
-  await values.pressSequentially('retreating');
+  await expect(values).toHaveValue('archived');
+  await values.pressSequentially('deleted');
   await values.press('Enter');
   await expect(card.locator('.card-property')).toHaveCount(3);
   await values.press('ArrowLeft');
@@ -178,10 +168,10 @@ test('enums have value-only editors, distinct links and structured exports', asy
   await page.keyboard.press('x');
   const exported = JSON.parse(await page.getByLabel('Export preview').inputValue());
   const enumeration = exported.entities.find(e => e.kind === 'enum');
-  expect(enumeration.name).toBe('Organisation');
-  expect(enumeration.values.map(v => v.value)).toEqual(['ready', 'disorganised', 'retreating']);
+  expect(enumeration.name).toBe('Status');
+  expect(enumeration.values.map(v => v.value)).toEqual(['draft', 'active', 'deleted']);
   expect(enumeration.properties).toBeUndefined();
-  expect(exported.entities[0].properties[0].type).toBe('Organisation');
+  expect(exported.entities[0].properties[0].type).toBe('Status');
   await page.getByRole('button', { name: /PlantUML/ }).click();
-  await expect(page.getByLabel('Export preview')).toHaveValue(/enum Organisation/);
+  await expect(page.getByLabel('Export preview')).toHaveValue(/enum Status/);
 });

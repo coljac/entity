@@ -43,10 +43,10 @@ export function checkName(value) {
 export function parseProperty(line) {
   const parts = line.trim().split(/\s+/);
   const name = parts.shift();
-  if (!name || !validName(name)) throw new Error('Start with a property name, for example: strength int');
+  if (!name || !validName(name)) throw new Error('Start with a property name, for example: count int');
   const many = parts.at(-1) === '*';
   if (many) parts.pop();
-  if (parts.length > 1 || parts.includes('*')) throw new Error('Use: name [type] [*] — for example: armies Army *');
+  if (parts.length > 1 || parts.includes('*')) throw new Error('Use: name [type] [*] — for example: items Item *');
   let type = parts[0] || 'str';
   type = Object.hasOwn(ALIASES, type) ? ALIASES[type] : type;
   if (!validName(type)) throw new Error('Use a built-in type or an entity name, followed by an optional *.');
@@ -140,7 +140,7 @@ export function removeEntity(document, entityId) {
 
 export function toJSON(document) {
   return JSON.stringify({
-    format: 'chamdo-entity-sketch', version: 1, name: document.name,
+    format: 'entity-sketch', version: 1, name: document.name,
     entities: document.entities.map(e => ({
       id: e.id, name: e.name, position: { x: e.x, y: e.y },
       ...(isEnum(e)
@@ -260,11 +260,11 @@ export function autoLayout(document) {
 
 export function sampleDocument() {
   const property = (name, type = 'str', many = false) => ({ id: uid(), name, type, many });
-  return { name: 'Chamdo game state', entities: [
-    { id: uid(), name: 'GameState', x: 60, y: 170, properties: [property('date', 'date'), property('turn', 'int'), property('armies', 'Army', true), property('provinces', 'Province', true)] },
-    { id: uid(), name: 'Army', x: 450, y: 75, properties: [property('name'), property('strength', 'int'), property('commander', 'Commander'), property('location', 'Province')] },
-    { id: uid(), name: 'Commander', x: 840, y: 40, properties: [property('name'), property('loyalty', 'float')] },
-    { id: uid(), name: 'Province', x: 840, y: 320, properties: [property('name'), property('population', 'int'), property('isCapital', 'bool')] },
+  return { name: 'Project model', entities: [
+    { id: uid(), name: 'Project', x: 60, y: 170, properties: [property('name'), property('created', 'date'), property('tasks', 'Task', true), property('members', 'Person', true)] },
+    { id: uid(), name: 'Task', x: 450, y: 75, properties: [property('title'), property('estimate', 'int'), property('assignee', 'Person'), property('status', 'Status')] },
+    { id: uid(), name: 'Person', x: 840, y: 40, properties: [property('name'), property('email')] },
+    { id: uid(), name: 'Status', kind: 'enum', x: 840, y: 320, properties: [], values: ['todo', 'in_progress', 'done'].map(name => ({ id: uid(), name })) },
   ] };
 }
 

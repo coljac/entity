@@ -1,4 +1,4 @@
-APP := "chamdo-entities"
+APP := "entity"
 
 # Start the editor and follow its log (Ctrl-C leaves the editor running).
 run: start
@@ -37,6 +37,6 @@ open:
 register:
     portly register {{APP}} -p frontend=5177 --next --free
 
-# Run interaction checks in the installed Shuttle browser (editor must be running).
+# Run interaction checks in Playwright Chromium (editor must be running).
 test-browser:
     ENTITY_BASE_URL="http://localhost:$(portly get {{APP}} frontend)" npm run test:browser

@@ -1,10 +1,10 @@
 # Entity
 
-A keyboard-driven editor for entities, typed properties, enums and relationships, with JSON and PlantUML export. Built for sketching Chamdo game state, but usable for other data models.
+A keyboard-driven tool for quickly sketching objects and their relationships. Define entities, typed properties, enums and collections in a visual graph, then export JSON or PlantUML.
 
 [Open the editor](https://coljac.github.io/entity/)
 
-The app runs entirely in the browser. No backend, database or accounts are required. Sketches are saved in browser local storage; export JSON for a portable backup. Starts with a small Chamdo example; **New sketch** opens a blank sketch.
+The app runs entirely in the browser. No backend, database or accounts are required. Sketches are saved in browser local storage; export JSON for a portable backup. The starter example models projects, tasks, people and a status enum. **New sketch** starts a blank sketch.
 
 The hosted site and localhost have separate browser storage. To move an existing sketch, export JSON from the local app and import it on the hosted site.
 
@@ -27,7 +27,7 @@ just register  # once, if not already registered with Portly
 just run
 ```
 
-`just run` starts the editor and tails its log. Ctrl-C leaves it running; `just stop` stops it. `just restart`, `just open`, `just build` and `just check` are also available. Portly supplies the port; `portly get chamdo-entities frontend` prints it.
+`just run` starts the editor and tails its log. Ctrl-C leaves it running; `just stop` stops it. `just restart`, `just open`, `just build` and `just check` are also available. Portly supplies the port; `portly get entity frontend` prints it.
 
 ## GitHub Pages
 
@@ -61,11 +61,11 @@ Type one property per line. Enter saves and leaves the input ready for another p
 
 ```text
 name                  # str, one to one
-strength int          # int, one to one
-commander Person      # links to Person, creates it if missing
-armies Army *         # Army collection, one to many
+count int             # int, one to one
+owner Person          # links to Person, creates it if missing
+items Item *          # Item collection, one to many
 scores int *          # int collection
-organisation enum     # creates an Organisation enum with a value list
+status enum           # creates a Status enum with a value list
 ```
 
 The comments above are explanatory; enter just the property syntax. Built-in types: `str`, `int`, `float`, `bool`, `date`, `datetime`, `uuid`, `json`. Aliases `string`, `integer`, `number`, `boolean` are accepted. Names use letters, digits and underscores and must start with a letter or underscore. Entity names are unique without regard to case.
@@ -80,22 +80,22 @@ Click a property to edit it. Tab completes a suggested type. Re-entering an exis
 
 ## Enums
 
-`organisation enum` creates an enum named `Organisation` and a reference to it. After Enter saves the property, press Right to open the enum. Enter values directly, one per line:
+`status enum` creates an enum named `Status` and a reference to it. After Enter saves the property, press Right to open the enum. Enter values directly, one per line:
 
 ```text
-ready
-disorganised
-routed
+draft
+active
+archived
 ```
 
 Values have no type or multiplicity. Enter saves and starts a new value row; Up / Down select existing values for overwriting. Left returns to a referring entity. Enum cards use a list icon and enum links are dashed purple.
 
-Each property declared with `enum` gets its own definition. Naming collisions use the owning entity as a prefix, for example `ArmyOrganisation`. Re-entering `enum` on an existing enum property retains its values. To share an enum explicitly, use its name as a property type: `fallback Organisation`.
+Each property declared with `enum` gets its own definition. Naming collisions use the owning entity as a prefix, for example `TaskStatus`. Re-entering `enum` on an existing enum property retains its values. To share an enum explicitly, use its name as a property type: `fallback Status`.
 
-JSON stores enum definitions as `kind: "enum"` with a `values` array of `{ "id": "…", "value": "ready" }` entries. Import also accepts plain string values. Existing version 1 sketches still load. PlantUML exports an `enum` declaration and a dashed reference using the [class diagram syntax](https://plantuml.com/class-diagram).
+JSON stores enum definitions as `kind: "enum"` with a `values` array of `{ "id": "…", "value": "draft" }` entries. Import also accepts plain string values. Existing version 1 sketches still load. PlantUML exports an `enum` declaration and a dashed reference using the [class diagram syntax](https://plantuml.com/class-diagram).
 
 Drag card headers to position them, drag the canvas to pan, scroll to zoom, or use the graph toolbar. Double-click a card to enter properties. JSON preserves names, types, cardinalities, IDs and layout and can be imported again. Import replaces the current sketch and can be undone. PlantUML exports class definitions and labelled 1:1 / 1:N associations. There is no PlantUML import.
 
-The example is illustrative, not a game-state specification. Browser storage is per origin (host + port), so use the same address each time. History is in memory; reload keeps the current sketch but clears undo history.
+Browser storage is per origin (host + port), so use the same address each time. History is in memory; reload keeps the current sketch but clears undo history. Sketches saved by earlier releases load automatically, and their JSON exports remain importable.
 
-`just check` runs the model checks and production build. With the editor running, `just test-browser` checks keyboard editing in a temporary, isolated Shuttle session. It expects Shuttle at `~/.local/share/shuttle/shuttle`; set `SHUTTLE_EXECUTABLE` to use another path.
+`just check` runs the model checks and production build. To check keyboard editing in the browser, install Playwright Chromium once with `npx playwright install chromium`, start the editor, then run `npm run test:browser` (or `just test-browser` when using Portly). Set `ENTITY_BASE_URL` if the editor uses a different address, or `BROWSER_EXECUTABLE` to use an existing Chromium or Chrome binary. Browser checks use isolated storage.
