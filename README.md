@@ -19,7 +19,7 @@ npm run dev
 
 Open the address printed by Vite. For a production build, run `npm run build`; the static files are written to `dist/`.
 
-Optional just and Portly wrappers are included for managing a registered local server:
+Optional just recipes use [Portly](https://github.com/coljac/portly), a CLI for managing local app ports and server processes:
 
 ```sh
 just install
